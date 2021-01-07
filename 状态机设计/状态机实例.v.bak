@@ -1,0 +1,110 @@
+// 本实例截取自摄像头驱动文件，
+module setup(
+    input clk,//100MHZ
+    input rst_n,
+    output reg init_en,
+
+    output reg ov_pwdn,
+    output reg ov_rst
+    );
+    //parameter MS_CYC = 5;
+    parameter MS_CYC = 50_000;
+    //parameter MS_CYC = 100_000;
+    reg [15:0] ms_cnt = 0;
+    wire en_ms_cnt;         //毫秒计数使能
+    wire ms_cnt_break;        //毫秒计数中断
+    reg [4:0]  delay_cnt = 0;
+    wire  en_delay_cnt ;    //延迟计数使能
+    wire  delay_cnt_break;   //延迟计数中断
+    reg [4:0] ms_delay;     //毫秒级延迟终点
+    reg [(2-1):0]  task_cnt = 0;    //状态计数
+    wire en_task_cnt;       //状态计数使能
+    wire task_cnt_break;    //状态计数中断
+
+
+    //ms计数时序，等同于分频
+    always @(posedge clk or negedge rst_n)begin
+        if(!rst_n)begin
+            ms_cnt <= 0;
+        end
+        else if(en_ms_cnt)begin
+        if(ms_cnt_break)
+            ms_cnt <= 0;
+        else
+            ms_cnt <= ms_cnt + 1;
+        end
+    end
+
+    assign en_ms_cnt = !init_en;       
+    assign ms_cnt_break = en_ms_cnt && ms_cnt== MS_CYC-1; //100_000_000/50_000 = 2_000  
+    //毫秒延迟时序
+    always @(posedge clk or negedge rst_n) 
+    begin 
+        if (rst_n==0) begin
+            delay_cnt <= 0; 
+        end
+        else if(en_delay_cnt) begin
+            if(delay_cnt_break)
+                delay_cnt <= 0; 
+            else
+                delay_cnt <= delay_cnt + 1'b1;
+        end
+    end
+    assign en_delay_cnt = ms_cnt_break;
+    assign delay_cnt_break = en_delay_cnt  && delay_cnt == ms_delay-1 ;
+    //状态计数时序
+    always @(posedge clk or negedge rst_n) begin 
+        if (rst_n==0) begin
+            task_cnt <= 0; 
+    end
+    else if(en_task_cnt) begin
+        if(task_cnt_break)
+            task_cnt <= 0; 
+        else
+            task_cnt <= task_cnt+1 ;
+       end
+    end
+    assign en_task_cnt = delay_cnt_break;
+    assign task_cnt_break = en_task_cnt  && task_cnt == (3)-1 ;
+
+    always@(*)begin
+        case(task_cnt)
+            0:ms_delay = 10;    //从通电到唤醒间隔10ms
+            1:ms_delay = 10;    //从唤醒到硬件复位间隔10ms
+            2:ms_delay = 20;    //从硬件复位到开始配置间隔20ms
+        //仿真用数据
+        /*0:N = 1;
+        1:N = 1;
+        2:N = 1;*/
+            default:;
+        endcase
+    end
+
+//信号逻辑
+    always  @(posedge clk or negedge rst_n)begin
+        if(rst_n==1'b0)begin
+            ov_pwdn <= 1;
+        end
+        else if(en_task_cnt && task_cnt == 0)begin
+            ov_pwdn <= 0;       //摄像头唤醒，进入工作状态
+        end
+    end
+
+    always  @(posedge clk or negedge rst_n)begin
+        if(rst_n==1'b0)begin
+            ov_rst <= 0;    
+        end
+        else if(en_task_cnt && task_cnt == 1)begin
+            ov_rst <= 1;        //硬件复位拉高，复位完成
+        end
+    end
+
+    always  @(posedge clk or negedge rst_n)begin
+        if(rst_n==1'b0)begin
+            init_en <= 0;       //标志位置0，重新上电时重新执行初始化操作
+        end
+        else if(task_cnt_break)begin
+            init_en <= 1;       //上电时序结束，开始配置寄存器
+        end
+    end
+endmodule
